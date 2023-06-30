@@ -10,7 +10,6 @@ use League\OAuth2\Client\Token\AccessToken;
 use League\OAuth2\Client\Tool\BearerAuthorizationTrait;
 use Psr\Http\Message\ResponseInterface;
 use Stevenmaguire\OAuth2\Client\Provider\Exception\EncryptionConfigurationException;
-use UnexpectedValueException;
 
 class Keycloak extends AbstractProvider
 {
@@ -49,13 +48,6 @@ class Keycloak extends AbstractProvider
     public $encryptionKey = null;
 
     /**
-      * Keycloak version.
-      *
-      * @var string
-      */
-    public $version = null;
-
-    /**
      * Constructs an OAuth 2.0 service provider.
      *
      * @param array $options An array of options to set on this provider.
@@ -72,11 +64,6 @@ class Keycloak extends AbstractProvider
             $this->setEncryptionKeyPath($options['encryptionKeyPath']);
             unset($options['encryptionKeyPath']);
         }
-
-        if (isset($options['version'])) {
-            $this->setVersion($options['version']);
-        }
-
         parent::__construct($options, $collaborators);
     }
 
@@ -89,24 +76,28 @@ class Keycloak extends AbstractProvider
      */
     public function decryptResponse($response)
     {
-        if (!is_string($response)) {
-            return $response;
+        if (is_string($response)) {
+            if ($this->encryptionAlgorithm && $this->encryptionKey) {
+                $response = json_decode(
+                    json_encode(
+                        JWT::decode(
+                            $response,
+                            $this->encryptionKey,
+                            array($this->encryptionAlgorithm)
+                        )
+                    ),
+                    true
+                );
+            } else {
+                throw new EncryptionConfigurationException(
+                    'The given response may be encrypted and sufficient '.
+                    'encryption configuration has not been provided.',
+                    400
+                );
+            }
         }
 
-        if ($this->usesEncryption()) {
-            return json_decode(
-                json_encode(
-                    JWT::decode(
-                        $response,
-                        $this->encryptionKey,
-                        array($this->encryptionAlgorithm)
-                    )
-                ),
-                true
-            );
-        }
-
-        throw EncryptionConfigurationException::undeterminedEncryption();
+        return $response;
     }
 
     /**
@@ -141,6 +132,16 @@ class Keycloak extends AbstractProvider
     public function getResourceOwnerDetailsUrl(AccessToken $token)
     {
         return $this->getBaseUrlWithRealm().'/protocol/openid-connect/userinfo';
+    }
+
+    /**
+     * Creates base url from provider configuration.
+     *
+     * @return string
+     */
+    protected function getBaseUrlWithRealm()
+    {
+        return $this->authServerUrl.'/realms/'.$this->realm;
     }
 
     /**
@@ -183,16 +184,6 @@ class Keycloak extends AbstractProvider
     }
 
     /**
-     * Creates base url from provider configuration.
-     *
-     * @return string
-     */
-    protected function getBaseUrlWithRealm()
-    {
-        return $this->authServerUrl.'/realms/'.$this->realm;
-    }
-
-    /**
      * Get the default scopes used by this provider.
      *
      * This should not be a complete list of all scopes, but the minimum
@@ -202,27 +193,13 @@ class Keycloak extends AbstractProvider
      */
     protected function getDefaultScopes()
     {
-        $scopes = [
-            'profile',
-            'email'
-        ];
-        if ($this->validateGteVersion('20.0.0')) {
-            $scopes[] = 'openid';
-        }
-        return $scopes;
+        return ['profile', 'email', 'openid'];
     }
 
-    /**
-     * Returns the string that should be used to separate scopes when building
-     * the URL for requesting an access token.
-     *
-     * @return string Scope separator, defaults to ','
-     */
-    protected function getScopeSeparator()
+    public function getScopeSeparator()
     {
         return ' ';
     }
-
 
     /**
      * Check a provider response for errors.
@@ -235,10 +212,7 @@ class Keycloak extends AbstractProvider
     protected function checkResponse(ResponseInterface $response, $data)
     {
         if (!empty($data['error'])) {
-            $error = $data['error'];
-            if (isset($data['error_description'])) {
-                $error.=': '.$data['error_description'];
-            }
+            $error = $data['error'].': '.$data['error_description'];
             throw new IdentityProviderException($error, 0, $data);
         }
     }
@@ -260,17 +234,10 @@ class Keycloak extends AbstractProvider
      *
      * @param  AccessToken $token
      * @return KeycloakResourceOwner
-     * @throws EncryptionConfigurationException
      */
     public function getResourceOwner(AccessToken $token)
     {
         $response = $this->fetchResourceOwnerDetails($token);
-
-        // We are always getting an array. We have to check if it is
-        // the array we created
-        if (array_key_exists('jwt', $response)) {
-            $response = $response['jwt'];
-        }
 
         $response = $this->decryptResponse($response);
 
@@ -324,56 +291,6 @@ class Keycloak extends AbstractProvider
         return $this;
     }
 
-     /**
-      * Updates the keycloak version.
-      *
-      * @param string  $version
-      *
-      * @return Keycloak
-      */
-    public function setVersion($version)
-    {
-        $this->version = $version;
-
-        return $this;
-    }
-
-    /**
-     * Checks if provider is configured to use encryption.
-     *
-     * @return bool
-     */
-    public function usesEncryption()
-    {
-        return (bool) $this->encryptionAlgorithm && $this->encryptionKey;
-    }
-
-    /**
-     * Parses the response according to its content-type header.
-     *
-     * @throws UnexpectedValueException
-     * @param  ResponseInterface $response
-     * @return array
-     */
-    protected function parseResponse(ResponseInterface $response)
-    {
-        // We have a problem with keycloak when the userinfo responses
-        // with a jwt token
-        // Because it just return a jwt as string with the header
-        // application/jwt
-        // This can't be parsed to a array
-        // Dont know why this function only allow an array as return value...
-        $content = (string) $response->getBody();
-        $type = $this->getContentType($response);
-
-        if (strpos($type, 'jwt') !== false) {
-            // Here we make the temporary array
-            return ['jwt' => $content];
-        }
-
-        return parent::parseResponse($response);
-    }
-
     /**
      * Validate if version is greater or equal
      *
@@ -382,6 +299,6 @@ class Keycloak extends AbstractProvider
      */
     private function validateGteVersion($version)
     {
-        return (isset($this->version) && version_compare($this->version, $version, '>='));
+        return true;
     }
 }
