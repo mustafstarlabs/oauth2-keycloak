@@ -134,6 +134,15 @@ class Keycloak extends AbstractProvider
         return $this->getBaseUrlWithRealm().'/protocol/openid-connect/userinfo';
     }
 
+    public function getResourceOwnerAccountUrl($referrer = '')
+    {
+        if($referrer) {
+            return $this->getBaseUrlWithRealm() . '/account?referrer=' . $referrer;
+        }
+
+        return $this->getBaseUrlWithRealm() . '/account';
+    }
+
     /**
      * Creates base url from provider configuration.
      *
