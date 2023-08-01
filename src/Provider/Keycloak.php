@@ -134,6 +134,12 @@ class Keycloak extends AbstractProvider
         return $this->getBaseUrlWithRealm().'/protocol/openid-connect/userinfo';
     }
 
+    /**
+     * Get provider url to redirect to my account
+     *
+     * @param $referrer
+     * @return string
+     */
     public function getResourceOwnerAccountUrl($referrer = '')
     {
         if($referrer) {
@@ -183,6 +189,21 @@ class Keycloak extends AbstractProvider
     }
 
     /**
+     * Builds the Registration URL.
+     *
+     * @param array $options
+     * @return mixed
+     */
+    public function getRegisterUrl(array $options = [])
+    {
+        $base = $this->getBaseRegistrationUrl();
+        $params = $this->getAuthorizationParameters($options);
+
+        $query = $this->getAuthorizationQuery($params);
+        return $this->appendQuery($base, $query);
+    }
+
+    /**
      * Get logout url to logout of session token
      *
      * @return string
@@ -190,6 +211,16 @@ class Keycloak extends AbstractProvider
     private function getBaseLogoutUrl()
     {
         return $this->getBaseUrlWithRealm() . '/protocol/openid-connect/logout';
+    }
+
+    /**
+     * Get base registration url
+     *
+     * @return string
+     */
+    private function getBaseRegistrationUrl()
+    {
+        return $this->getBaseUrlWithRealm() . '/protocol/openid-connect/registrations';
     }
 
     /**
